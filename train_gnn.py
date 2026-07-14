@@ -2,48 +2,39 @@ import argparse
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
-from torch_geometric.transforms import KNNGraph
 from torch_geometric.loader import DataLoader
 
+from data_pipeline.graph_data import GraphDataset
 from models.gnn import DNA3D_GAT
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train GNN for 3D genome interaction prediction")
-    p.add_argument("--data_dir", required=True, help="Directory with .pt graph files")
+    p.add_argument("--train_dir", required=True, help="Root directory of training GraphDataset")
+    p.add_argument("--val_dir", default=None,
+                   help="Root directory of validation GraphDataset; if omitted, 10%% of train data is used")
     p.add_argument("--checkpoint_dir", default="./checkpoints")
     p.add_argument("--in_feats", type=int, required=True)
     p.add_argument("--num_bins", type=int, required=True)
     p.add_argument("--hidden_dim", type=int, default=128)
     p.add_argument("--heads", type=int, default=4)
-    p.add_argument("--k_neighbors", type=int, default=10)
-    p.add_argument("--batch_size", type=int, default=4)
+    p.add_argument("--batch_size", type=int, default=1)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--max_epochs", type=int, default=100)
+    p.add_argument("--loss_fn", default="poisson", choices=["poisson", "mse", "mae"])
+    p.add_argument("--alpha", type=float, default=0.1,
+                   help="Weight for distance-decay regularization")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
 
 
-def load_graphs(data_dir: str, k: int) -> list:
-    knn = KNNGraph(k=k, loop=True)
-    graphs = []
-    for pt_file in sorted(Path(data_dir).glob("*.pt")):
-        data = torch.load(pt_file)
-        num_nodes = data.x.size(0)
-        data.pos = torch.arange(num_nodes, dtype=torch.float).view(-1, 1)
-        graphs.append(knn(data))
-    return graphs
-
-
-def train_epoch(model, loader, optimizer, device):
+def train_epoch(model, loader, optimizer, device, loss_fn, alpha):
     model.train()
     total_loss = 0.0
     for batch in loader:
         batch = batch.to(device)
         optimizer.zero_grad()
-        pred = model(batch)
-        loss = F.poisson_nll_loss(pred, batch.target, log_input=False, full=True)
+        loss = model.compute_loss(batch, batch.target, loss_type=loss_fn, alpha=alpha)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -51,13 +42,12 @@ def train_epoch(model, loader, optimizer, device):
 
 
 @torch.no_grad()
-def eval_epoch(model, loader, device):
+def eval_epoch(model, loader, device, loss_fn, alpha):
     model.eval()
     total_loss = 0.0
     for batch in loader:
         batch = batch.to(device)
-        pred = model(batch)
-        loss = F.poisson_nll_loss(pred, batch.target, log_input=False, full=True)
+        loss = model.compute_loss(batch, batch.target, loss_type=loss_fn, alpha=alpha)
         total_loss += loss.item()
     return total_loss / len(loader)
 
@@ -66,10 +56,15 @@ def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
 
-    graphs = load_graphs(args.data_dir, args.k_neighbors)
-    split = int(len(graphs) * 0.9)
-    train_loader = DataLoader(graphs[:split], batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(graphs[split:], batch_size=args.batch_size, shuffle=False)
+    train_ds = GraphDataset(root=args.train_dir)
+    if args.val_dir is not None:
+        val_ds = GraphDataset(root=args.val_dir)
+    else:
+        split = int(len(train_ds) * 0.9)
+        train_ds, val_ds = train_ds[:split], train_ds[split:]
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
 
     model = DNA3D_GAT(
         num_bins=args.num_bins,
@@ -81,13 +76,12 @@ def main() -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
 
-    from pathlib import Path
     Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
     best_val = float("inf")
 
     for epoch in range(1, args.max_epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, device)
-        val_loss = eval_epoch(model, val_loader, device)
+        train_loss = train_epoch(model, train_loader, optimizer, device, args.loss_fn, args.alpha)
+        val_loss = eval_epoch(model, val_loader, device, args.loss_fn, args.alpha)
         scheduler.step(val_loss)
         print(f"Epoch {epoch:03d} | train={train_loss:.4f} | val={val_loss:.4f}")
         if val_loss < best_val:

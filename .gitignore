@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data files (large / not versioned)
+data/
+*.fa
+*.fa.fai
+*.cool
+*.mcool
+*.bw
+*.bigwig
+*.bed
+*.bam
+*.bai
+
+# Processed graph datasets
+develop_test/graph_data_*/
+*/processed/
+*/raw/
+
+# Model checkpoints
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+# Logs
+logs/
+lightning_logs/
+*.log
+wandb/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Legacy / scratch files
+graph_data.py
+graph_data_multiprocess.py
+model.py
+chip_prediction_model.py
+finetune_enformer.py
+
+# Exploratory / one-off notebooks
+3_graph_data.ipynb
+3_normalze_hic_file.ipynb

@@ -55,7 +55,7 @@ class DNA3D_GAT(nn.Module):
         x, edge_index = data.x, data.edge_index
         N = x.size(0)
 
-        idx = torch.arange(N, device=x.device)
+        idx = torch.arange(N, device=x.device) % self.num_bins
         h = F.elu(self.input_proj(x) + self.pos_emb(idx))
         if self.use_layer_norm:
             h = self.layer_norm1(h)
