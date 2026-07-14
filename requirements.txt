@@ -1,0 +1,10 @@
+torch
+torch_geometric
+pytorch_lightning
+enformer_pytorch
+cooler
+kipoiseq
+pyfaidx
+pyBigWig
+torchmetrics
+tqdm
